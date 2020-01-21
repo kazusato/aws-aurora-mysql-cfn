@@ -1,0 +1,115 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  TargetRegion:
+    Type: String
+    Default: ap-northeast-1
+
+  RdsAvailabilityZone1:
+    Type: String
+    Default: ap-northeast-1a
+
+  RdsAvailabilityZone2:
+    Type: String
+    Default: ap-northeast-1c
+
+  RdsAvailabilityZone:
+    Type: String
+    Default: ap-northeast-1a
+
+  VpcBlock:
+    Type: String
+    Default: 192.168.0.0/16
+
+  RdsSubnet1Block:
+    Type: String
+    Default: 192.168.1.0/24
+
+  RdsSubnet2Block:
+    Type: String
+    Default: 192.168.2.0/24
+
+  OpeSubnetBlock:
+    Type: String
+    Default: 192.168.3.0/24
+
+Resources:
+  WorkVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcBlock
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: Work-VPC
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref WorkVPC
+
+  OpeServerRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref WorkVPC
+      Tags:
+        - Key: Name
+          Value: OpeServerRouteTable
+
+  OpeServerRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref OpeServerRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  RdsSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Ref RdsAvailabilityZone1
+      CidrBlock: !Ref RdsSubnet1Block
+      VpcId: !Ref WorkVPC
+      Tags:
+        - Key: Name
+          Value: Rds-Subnet-1
+
+  RdsSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Ref RdsAvailabilityZone2
+      CidrBlock: !Ref RdsSubnet2Block
+      VpcId: !Ref WorkVPC
+      Tags:
+        - Key: Name
+          Value: Rds-Subnet-2
+
+  OpeServerSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Ref RdsAvailabilityZone
+      CidrBlock: !Ref OpeSubnetBlock
+      VpcId: !Ref WorkVPC
+      Tags:
+        - Key: Name
+          Value: Ope-Server-Subnet
+
+Outputs:
+  VPC:
+    Value: !Ref WorkVPC
+
+  OpeSubnet:
+    Value: !Ref OpeServerSubnet
+
+  RdsSubnet1:
+    Value: !Ref RdsSubnet1
+
+  RdsSubnet2:
+    Value: !Ref RdsSubnet2
+
+  RouteTable:
+    Value: !Ref OpeServerRouteTable

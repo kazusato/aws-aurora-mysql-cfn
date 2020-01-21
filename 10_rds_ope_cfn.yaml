@@ -1,0 +1,247 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Parameters:
+  WorkVPC:
+    Type: AWS::EC2::VPC::Id
+
+  OpeServerRouteTable:
+    Type: String
+
+  OpeServerInstanceType:
+    Type: String
+    Default: t2.micro
+
+  OpeServerImageId:
+    Type: String
+    Default: ami-00d101850e971728d # ap-northeast-1, SSD, Amazon Linux 2
+
+  OpeServerVolumeSize:
+    Type: Number
+    Default: 8
+
+  RdsSubnet1:
+    Type: AWS::EC2::Subnet::Id
+
+  RdsSubnet2:
+    Type: AWS::EC2::Subnet::Id
+
+  OpeSubnet:
+    Type: AWS::EC2::Subnet::Id
+
+  OpeSubnetBlock:
+    Type: String
+    Default: 192.168.3.0/24
+
+Resources:
+# RDS
+  WorkDBClusterParameterGroup:
+    Type: AWS::RDS::DBClusterParameterGroup
+    Properties:
+      Family: "aurora-mysql5.7"
+      Description: "Aurora-MySQL-5.7-Parameter-Group"
+      Parameters:
+        time_zone: "Asia/Tokyo"
+        slow_query_log: 1
+        general_log: 1
+        server_audit_logging: 1
+        server_audit_events: "CONNECT,QUERY,QUERY_DCL,QUERY_DDL,QUERY_DML,TABLE"
+
+  WorkDBOptionGroup:
+    Type: "AWS::RDS::OptionGroup"
+    Properties:
+      EngineName: "aurora-mysql"
+      MajorEngineVersion: "5.7"
+      OptionGroupDescription: "WorkDB-Option-Group"
+      OptionConfigurations: []
+      Tags:
+        - Key: Name
+          Value: Test-Aurora-57db-OptionGroup
+
+  WorkDBInstanceParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Family: "aurora-mysql5.7"
+      Description: "WorkDB-Instance-Parameter-Group"
+
+  WorkDBCluster:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      DatabaseName: myworkdb
+      DBClusterIdentifier: WorkDBCluster
+      DBClusterParameterGroupName: !Ref WorkDBClusterParameterGroup
+      DBSubnetGroupName: !Ref WorkDBSubnetGroup
+      Engine: aurora-mysql
+      EngineVersion: "5.7.mysql_aurora.2.04.6"
+      Port: 3306
+      DeletionProtection: false
+      MasterUsername: !Join ['', ['{{resolve:secretsmanager:', !Ref RdsMasterSecret, ':SecretString:username}}' ]]
+      MasterUserPassword: !Join ['', ['{{resolve:secretsmanager:', !Ref RdsMasterSecret, ':SecretString:password}}' ]]
+      VpcSecurityGroupIds:
+        - !Ref RdsSecurityGroup
+      StorageEncrypted: True
+      BackupRetentionPeriod: 2
+      PreferredBackupWindow: 18:00-18:30 # UTC
+      PreferredMaintenanceWindow: sat:19:00-sat:19:30 # UTC
+      Tags:
+        - Key: Name
+          Value: WorkDBCluster
+
+  WorkDB:
+    Type: "AWS::RDS::DBInstance"
+    Properties:
+      DBInstanceIdentifier: WorkDBInstance
+      DBClusterIdentifier: !Ref WorkDBCluster
+      Engine: aurora-mysql
+      DBInstanceClass: db.t2.small
+      DBSubnetGroupName: !Ref WorkDBSubnetGroup
+      PubliclyAccessible: false
+      AutoMinorVersionUpgrade: false
+      DBParameterGroupName: !Ref WorkDBInstanceParameterGroup
+      OptionGroupName: !Ref WorkDBOptionGroup
+      Tags:
+        - Key: Name
+          Value: WorkDBInstance
+
+  RdsMasterSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "dbadmin"}'
+        GenerateStringKey: 'password'
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\'''
+      Name: RdsMasterSecret
+
+  RdsUserSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "mywork"}'
+        GenerateStringKey: 'password'
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\''{}'
+      Name: RdsUserSecret
+
+  RdsSecretAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref RdsMasterSecret
+      TargetId: !Ref WorkDB
+      TargetType: AWS::RDS::DBInstance
+
+  WorkDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: subnet-group-work-db
+      DBSubnetGroupDescription: "DB Subnet Group"
+      SubnetIds:
+        - !Ref RdsSubnet1
+        - !Ref RdsSubnet2
+
+# Network/Security Groups
+  RdsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for RDS
+      VpcId: !Ref WorkVPC
+
+  RdsIngressMySQLOpe:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RdsSecurityGroup
+      CidrIp: !Ref OpeSubnetBlock
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+
+  OpeServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for Ope
+      VpcId: !Ref WorkVPC
+
+  RdsIngressMySQLFromOpe:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RdsSecurityGroup
+      SourceSecurityGroupId: !Ref OpeServerSecurityGroup
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+
+  OpeServerSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref OpeSubnet
+      RouteTableId: !Ref OpeServerRouteTable
+
+  # OpeServer
+  OpeServerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub WorkOpeServerRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+  OpeServerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref OpeServerRole
+
+  OpeServerEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  OpeServerEIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt OpeServerEIP.AllocationId
+      InstanceId: !Ref OpeServerInstance
+
+  OpeServerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref OpeServerInstanceType
+      ImageId: !Ref OpeServerImageId
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp2
+            VolumeSize: 8
+            DeleteOnTermination: true
+      NetworkInterfaces:
+        - SubnetId: !Ref OpeSubnet
+          AssociatePublicIpAddress: false
+          GroupSet:
+            - !Ref OpeServerSecurityGroup
+          DeviceIndex: 0
+          DeleteOnTermination: true
+      DisableApiTermination: false
+      IamInstanceProfile: !Ref OpeServerInstanceProfile
+      UserData:
+        Fn::Base64:
+          !Sub |
+          #!/bin/bash
+          set -o xtrace
+          yum install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm
+          /opt/aws/bin/cfn-signal --exit-code $? \
+                   --stack  ${AWS::StackName} \
+                   --resource NodeGroup  \
+                   --region ${AWS::Region}
+
+Outputs:
+  RDSEndpoint:
+    Value: !GetAtt WorkDB.Endpoint.Address
