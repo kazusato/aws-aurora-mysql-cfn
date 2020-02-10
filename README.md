@@ -23,4 +23,21 @@ and install by
 ```
 $ mysql -h <RDS-endpoint> -u dbadmin -p myworkdb
 ```
+# create database
 
+# create user
+
+# grant
+
+# create table
+
+# load data
+
+
+## load data local infile with mysql 8.0 client
+
+Add
+```
+--local-infile=1
+```
+in the mysql command.
